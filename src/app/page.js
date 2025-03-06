@@ -3,6 +3,22 @@
 import { useState, useRef, useEffect } from 'react';
 import CourseMaterial from '@/components/CourseMaterial';
 
+// Helper function to safely parse JSON responses
+async function safeJsonParse(response) {
+  try {
+    const text = await response.text();
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      console.error('Failed to parse response as JSON:', text);
+      throw new Error(`Invalid response format: ${text.substring(0, 100)}...`);
+    }
+  } catch (error) {
+    console.error('Error reading response:', error);
+    throw new Error('Failed to read response from server');
+  }
+}
+
 // Add animation keyframes to the <head>
 const animationStyles = `
   @keyframes highlightPulse {
@@ -330,11 +346,13 @@ export default function Home() {
         });
 
         if (!courseResponse.ok) {
-          const errorData = await courseResponse.json();
+          const errorData = await safeJsonParse(courseResponse).catch(() => ({
+            error: `Server error: ${courseResponse.status} ${courseResponse.statusText}`
+          }));
           throw new Error(errorData.error || 'Failed to generate course material');
         }
         
-        const courseData = await courseResponse.json();
+        const courseData = await safeJsonParse(courseResponse);
         console.log("Course data:", courseData);
         setCourseData(courseData);
       }
@@ -350,11 +368,13 @@ export default function Home() {
         });
 
         if (!scriptResponse.ok) {
-          const errorData = await scriptResponse.json();
+          const errorData = await safeJsonParse(scriptResponse).catch(() => ({
+            error: `Server error: ${scriptResponse.status} ${scriptResponse.statusText}`
+          }));
           throw new Error(errorData.error || 'Failed to generate script');
         }
         
-        const scriptData = await scriptResponse.json();
+        const scriptData = await safeJsonParse(scriptResponse);
         console.log("Script data:", scriptData);
         
         // Generate images
@@ -367,11 +387,13 @@ export default function Home() {
         });
 
         if (!imageResponse.ok) {
-          const errorData = await imageResponse.json();
+          const errorData = await safeJsonParse(imageResponse).catch(() => ({
+            error: `Server error: ${imageResponse.status} ${imageResponse.statusText}`
+          }));
           throw new Error(errorData.error || 'Failed to generate images');
         }
         
-        const imageData = await imageResponse.json();
+        const imageData = await safeJsonParse(imageResponse);
         console.log("Image data:", imageData);
         
         // Generate voice
@@ -384,11 +406,13 @@ export default function Home() {
         });
 
         if (!voiceResponse.ok) {
-          const errorData = await voiceResponse.json();
+          const errorData = await safeJsonParse(voiceResponse).catch(() => ({
+            error: `Server error: ${voiceResponse.status} ${voiceResponse.statusText}`
+          }));
           throw new Error(errorData.error || 'Failed to generate voiceover');
         }
         
-        const voiceData = await voiceResponse.json();
+        const voiceData = await safeJsonParse(voiceResponse);
         console.log("Voice data:", voiceData);
         
         // Combine everything
@@ -1034,6 +1058,14 @@ export default function Home() {
                     cursor: 'pointer',
                     transition: 'all 0.2s ease',
                     backdropFilter: 'blur(10px)'
+                  }}
+                  onClick={() => {
+                    const downloadLink = document.createElement('a');
+                    downloadLink.href = videoData.videoUrl;
+                    downloadLink.download = `${topic.replace(/\s+/g, '_')}_audio.mp3`;
+                    document.body.appendChild(downloadLink);
+                    downloadLink.click();
+                    document.body.removeChild(downloadLink);
                   }}
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

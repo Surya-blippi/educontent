@@ -11,8 +11,21 @@ export async function POST(request) {
       });
     }
 
+    // Check if API key exists
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.error('Missing GEMINI_API_KEY environment variable');
+      return new Response(JSON.stringify({ 
+        error: 'Server configuration error: Missing API key',
+        details: 'The GEMINI_API_KEY environment variable is not configured'
+      }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
     // Gemini API endpoint
-    const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+    const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
 
     // Create prompt for generating comprehensive course material
     const prompt = `Create a detailed, comprehensive course structure and content for learning about "${topic}". 
@@ -92,53 +105,116 @@ export async function POST(request) {
     
     The content should be educational, accurate, comprehensive, and presented in a logical learning progression.`;
 
-    // Make API request to Gemini
-    const response = await axios.post(geminiEndpoint, {
-      contents: [{
-        parts: [{ text: prompt }]
-      }]
-    }, {
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    });
-
-    // Process Gemini response
-    let courseData;
     try {
-      // Get the generated content text from the Gemini response
+      // Make API request to Gemini
+      const response = await axios.post(geminiEndpoint, {
+        contents: [{
+          parts: [{ text: prompt }]
+        }]
+      }, {
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        timeout: 60000 // 60 second timeout for longer content generation
+      });
+
+      // Process Gemini response
       const generatedText = response.data.candidates[0].content.parts[0].text;
       
       // Extract JSON from the text response
       const jsonMatch = generatedText.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        courseData = JSON.parse(jsonMatch[0]);
+        try {
+          const courseData = JSON.parse(jsonMatch[0]);
+          
+          // Return course data with a simplified structure if it's too large
+          const sizeEstimate = JSON.stringify(courseData).length;
+          if (sizeEstimate > 5000000) { // If over ~5MB, simplify
+            const simplifiedData = simplifyLargeContent(courseData);
+            return new Response(JSON.stringify(simplifiedData), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' }
+            });
+          }
+          
+          return new Response(JSON.stringify(courseData), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        } catch (parseError) {
+          console.error('JSON parse error:', parseError, 'Text:', jsonMatch[0].substring(0, 200) + '...');
+          return new Response(JSON.stringify({ 
+            error: 'Failed to parse course data',
+            details: 'The AI generated invalid JSON'
+          }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
       } else {
-        throw new Error('No valid JSON found in the response');
+        console.error('No valid JSON found in the response:', generatedText.substring(0, 200) + '...');
+        return new Response(JSON.stringify({ 
+          error: 'Failed to generate course data',
+          details: 'The AI response did not contain valid JSON'
+        }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
     } catch (error) {
-      console.error('Error parsing course data:', error);
+      console.error('API request error:', error.message);
+      if (error.response) {
+        console.error('API response status:', error.response.status);
+        console.error('API response data:', error.response.data);
+      }
+      
       return new Response(JSON.stringify({ 
-        error: 'Failed to generate course data',
-        details: error.message 
+        error: 'Failed to generate course content',
+        details: error.message
       }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' }
       });
     }
-
-    return new Response(JSON.stringify(courseData), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' }
-    });
   } catch (error) {
     console.error('Course generation error:', error);
     return new Response(JSON.stringify({ 
-      error: 'Failed to generate course',
+      error: 'Server error',
       details: error.message
     }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
     });
   }
+}
+
+// Helper function to reduce content size if needed
+function simplifyLargeContent(courseData) {
+  // Create a copy to modify
+  const simplified = JSON.parse(JSON.stringify(courseData));
+  
+  // Trim long text content
+  simplified.modules.forEach(module => {
+    module.lessons.forEach(lesson => {
+      if (lesson.lessonContent && lesson.lessonContent.length > 1000) {
+        lesson.lessonContent = lesson.lessonContent.substring(0, 1000) + '... (content truncated)';
+      }
+      
+      // Simplify practice questions
+      if (lesson.practiceQuestions && lesson.practiceQuestions.length > 3) {
+        lesson.practiceQuestions = lesson.practiceQuestions.slice(0, 3);
+      }
+    });
+  });
+  
+  // Simplify assessments
+  if (simplified.assessments && simplified.assessments.length > 0) {
+    simplified.assessments.forEach(assessment => {
+      if (assessment.questions && assessment.questions.length > 5) {
+        assessment.questions = assessment.questions.slice(0, 5);
+      }
+    });
+  }
+  
+  return simplified;
 }
