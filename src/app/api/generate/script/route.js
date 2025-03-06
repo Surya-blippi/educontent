@@ -1,5 +1,7 @@
 import axios from 'axios';
 
+export const runtime = 'edge'; // Use Edge Function runtime
+
 export async function POST(request) {
   try {
     const { topic } = await request.json();
@@ -50,20 +52,32 @@ export async function POST(request) {
     Please maintain design consistency and flow between images. Make the prompts detailed for high-quality AI image generation. The content should be educational and accurate.`;
 
     try {
-      // Make API request to Gemini
-      const response = await axios.post(geminiEndpoint, {
-        contents: [{
-          parts: [{ text: prompt }]
-        }]
-      }, {
+      // Make API request to Gemini with a timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000); // 25 second timeout
+      
+      const response = await fetch(geminiEndpoint, {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json'
-        }
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{ text: prompt }]
+          }]
+        }),
+        signal: controller.signal
       });
-
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        throw new Error(`Gemini API error: ${response.status} ${response.statusText}`);
+      }
+      
       // Process Gemini response
-      // Get the generated content text from the Gemini response
-      const generatedText = response.data.candidates[0].content.parts[0].text;
+      const responseData = await response.json();
+      const generatedText = responseData.candidates[0].content.parts[0].text;
       
       // Extract JSON from the text response
       const jsonMatch = generatedText.match(/\{[\s\S]*\}/);
@@ -75,7 +89,7 @@ export async function POST(request) {
             headers: { 'Content-Type': 'application/json' }
           });
         } catch (parseError) {
-          console.error('JSON parse error:', parseError, 'Text:', jsonMatch[0]);
+          console.error('JSON parse error:', parseError);
           return new Response(JSON.stringify({ 
             error: 'Failed to parse script data',
             details: 'The AI generated invalid JSON'
@@ -85,7 +99,7 @@ export async function POST(request) {
           });
         }
       } else {
-        console.error('No valid JSON found in the response:', generatedText);
+        console.error('No valid JSON found in the response');
         return new Response(JSON.stringify({ 
           error: 'Failed to generate script data',
           details: 'The AI response did not contain valid JSON'
@@ -96,9 +110,16 @@ export async function POST(request) {
       }
     } catch (error) {
       console.error('API request error:', error.message);
-      if (error.response) {
-        console.error('API response status:', error.response.status);
-        console.error('API response data:', error.response.data);
+      
+      // Handle timeout error specifically
+      if (error.name === 'AbortError') {
+        return new Response(JSON.stringify({ 
+          error: 'API request timed out',
+          details: 'Try a simpler or shorter topic'
+        }), {
+          status: 504,
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
       
       return new Response(JSON.stringify({ 
